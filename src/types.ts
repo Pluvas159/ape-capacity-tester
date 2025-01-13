@@ -29,3 +29,9 @@ export interface GraphProps {
   color: string;
   data: MeasurementData[];
 }
+
+export interface BatteryStatus {
+  soc: number | null;
+  timeToEmpty: number | null;
+  dropRate: number | null;
+}

@@ -1,79 +1,9 @@
 import React, { useState, useEffect, useMemo } from "react";
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  ResponsiveContainer,
-  Tooltip,
-} from "recharts";
-import { Power } from "lucide-react";
-import {
-  ArduinoData,
-  GraphProps,
-  MeasurementData,
-  SerialPortInfo,
-} from "./types";
+import { SerialPortInfo, ArduinoData, MeasurementData } from "./types";
+import LoadControl from "./LoadControl";
+import MeasurementGraph from "./MeasurementGraph";
 
 const { ipcRenderer } = window.require("electron");
-
-const MeasurementGraph: React.FC<GraphProps> = ({
-  dataKey,
-  title,
-  units,
-  domain,
-  color,
-  data,
-}) => (
-  <div className="h-64">
-    <h3 className="text-lg font-semibold mb-2 text-purple-300">{title}</h3>
-    <ResponsiveContainer width="100%" height="100%">
-      <LineChart
-        data={data}
-        margin={{ top: 5, right: 20, bottom: 25, left: 40 }}
-      >
-        <XAxis
-          dataKey="time"
-          stroke="#9CA3AF"
-          label={{
-            value: "Time",
-            position: "bottom",
-            fill: "#9CA3AF",
-            offset: 10,
-          }}
-          tickFormatter={(time: string) => new Date(time).toLocaleTimeString()}
-        />
-        <YAxis
-          dataKey={dataKey}
-          stroke="#9CA3AF"
-          label={{
-            value: `${title} (${units})`,
-            angle: -90,
-            position: "left",
-            fill: "#9CA3AF",
-            offset: 10,
-          }}
-          domain={domain}
-        />
-        <Tooltip
-          contentStyle={{
-            backgroundColor: "#1F2937",
-            border: "1px solid #374151",
-          }}
-          labelStyle={{ color: "#9CA3AF" }}
-          labelFormatter={(time: string) => new Date(time).toLocaleTimeString()}
-        />
-        <Line
-          type="monotone"
-          dataKey={dataKey}
-          stroke={color}
-          strokeWidth={2}
-          dot={false}
-        />
-      </LineChart>
-    </ResponsiveContainer>
-  </div>
-);
 
 const App: React.FC = () => {
   const [ports, setPorts] = useState<SerialPortInfo[]>([]);
@@ -81,7 +11,6 @@ const App: React.FC = () => {
   const [connected, setConnected] = useState<boolean>(false);
   const [receivedData, setReceivedData] = useState<string[]>([]);
   const [timeRange, setTimeRange] = useState<number>(50);
-  const [loadActive, setLoadActive] = useState<boolean>(false);
 
   const measurementData = useMemo<MeasurementData[]>(() => {
     const now = Date.now();
@@ -100,7 +29,7 @@ const App: React.FC = () => {
           ).toISOString(),
           voltage: data.voltage + 6 || 0,
           current:
-            Number(((data.current_sense / 6 / 4.7) * 1000).toFixed(2)) || 0,
+            Number(((data.current_sense / 6 / 20) * 1000).toFixed(2)) || 0,
           loadActive: data.load_active || false,
         };
       })
@@ -111,6 +40,12 @@ const App: React.FC = () => {
     return measurementData.slice(-timeRange);
   }, [measurementData, timeRange]);
 
+  const latestMeasurement = useMemo(() => {
+    return (
+      measurementData[measurementData.length - 1] || { voltage: 0, current: 0 }
+    );
+  }, [measurementData]);
+
   useEffect(() => {
     async function listPorts() {
       const availablePorts = await ipcRenderer.invoke("list-ports");
@@ -120,12 +55,6 @@ const App: React.FC = () => {
 
     ipcRenderer.on("serial-data", (_event: any, data: string) => {
       setReceivedData((prev) => [...prev, data]);
-      try {
-        const parsed: ArduinoData = JSON.parse(data);
-        setLoadActive(parsed.load_active);
-      } catch (e) {
-        console.error("Failed to parse load state:", data);
-      }
     });
 
     return () => {
@@ -143,14 +72,6 @@ const App: React.FC = () => {
     }
   };
 
-  const toggleLoad = async (): Promise<void> => {
-    const result: { success: boolean; error?: string } =
-      await ipcRenderer.invoke("send-data", "load");
-    if (!result.success) {
-      alert(`Failed to toggle load: ${result.error}`);
-    }
-  };
-
   return (
     <div className="relative min-h-screen overflow-hidden">
       <div className="absolute inset-0 bg-gradient-to-br from-blue-900 via-gray-800 to-purple-900">
@@ -163,10 +84,11 @@ const App: React.FC = () => {
       <div className="relative min-h-screen text-gray-100 p-6 font-mono">
         <div className="max-w-6xl mx-auto">
           <h1 className="text-3xl font-bold mb-8 text-purple-400">
-            Arduino Monitor
+            Battery Capacity Monitor
           </h1>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Connection Panel */}
             <div className="bg-gray-900/30 backdrop-blur-md rounded-lg p-6 shadow-lg border border-gray-700/50">
               <h2 className="text-xl font-semibold mb-4 text-purple-300">
                 Connection
@@ -194,31 +116,35 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            <div className="bg-gray-900/30 backdrop-blur-md rounded-lg p-6 shadow-lg border border-gray-700/50">
-              <h2 className="text-xl font-semibold mb-4 text-purple-300">
-                Load Control
-              </h2>
-              <div className="flex items-center justify-between">
-                <span className="text-lg">
-                  Load Status: {loadActive ? "ON" : "OFF"}
-                </span>
-                <button
-                  onClick={toggleLoad}
-                  disabled={!connected}
-                  className={`p-4 rounded-full transition-colors ${
-                    loadActive
-                      ? "bg-green-600 hover:bg-green-700"
-                      : "bg-gray-600 hover:bg-gray-700"
-                  } disabled:opacity-50`}
-                >
-                  <Power
-                    size={24}
-                    className={loadActive ? "text-white" : "text-gray-300"}
-                  />
-                </button>
+            {/* Latest Measurements Cards */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-gray-900/30 backdrop-blur-md rounded-lg p-6 shadow-lg border border-gray-700/50">
+                <h2 className="text-xl font-semibold mb-2 text-purple-300">
+                  Voltage
+                </h2>
+                <div className="text-3xl font-bold text-white">
+                  {latestMeasurement.voltage.toFixed(2)}
+                  <span className="text-lg ml-1 text-gray-400">V</span>
+                </div>
+              </div>
+              <div className="bg-gray-900/30 backdrop-blur-md rounded-lg p-6 shadow-lg border border-gray-700/50">
+                <h2 className="text-xl font-semibold mb-2 text-purple-300">
+                  Current
+                </h2>
+                <div className="text-3xl font-bold text-white">
+                  {latestMeasurement.current.toFixed(1)}
+                  <span className="text-lg ml-1 text-gray-400">mA</span>
+                </div>
               </div>
             </div>
 
+            {/* Load Control Component */}
+            <LoadControl
+              connected={connected}
+              measurementData={measurementData}
+            />
+
+            {/* Graphs Panel */}
             <div className="bg-gray-900/30 backdrop-blur-md rounded-lg p-6 shadow-lg border border-gray-700/50 md:col-span-2 pb-20">
               <h2 className="text-xl font-semibold mb-4 text-purple-300">
                 Measurements
@@ -256,6 +182,7 @@ const App: React.FC = () => {
               </div>
             </div>
 
+            {/* Log Panel */}
             <div className="bg-gray-900/30 backdrop-blur-md rounded-lg p-6 shadow-lg border border-gray-700/50 md:col-span-2 h-64 overflow-y-auto">
               <h2 className="text-xl font-semibold mb-4 text-purple-300">
                 Log
